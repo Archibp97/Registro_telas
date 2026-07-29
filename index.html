@@ -274,12 +274,12 @@ async function loadHistory(){
   }
 }
 
-async function insertRegistro(registro){
+async function insertRegistro(rows){
   try{
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${SB_TABLE}`, {
       method: 'POST',
       headers: { ...SB_HEADERS, 'Prefer': 'return=representation' },
-      body: JSON.stringify(registro),
+      body: JSON.stringify(rows),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     return true;
@@ -289,9 +289,10 @@ async function insertRegistro(registro){
   }
 }
 
-async function deleteRegistro(id){
+async function deleteRegistro(ids){
+  const list = Array.isArray(ids) ? ids : [ids];
   try{
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${SB_TABLE}?id=eq.${id}`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${SB_TABLE}?id=in.(${list.join(',')})`, {
       method: 'DELETE',
       headers: SB_HEADERS,
     });
@@ -498,22 +499,36 @@ async function onSave(){
 
   const tipo = TIPOS.find(t=>t.id===state.tipoId);
   const catalogo = DATA.catalogos.find(c=>c.id===state.catalogoId);
+  const notaVal = state.nota.trim() || null;
 
-  const registro = {
-    tipo_id: tipo.id,
-    tipo_label: tipo.label,
-    catalogo_id: catalogo.id,
-    catalogo_nombre: catalogo.nombre,
-    cantidad: m==='cantidad' ? Number(state.cantidad) : null,
-    items: m==='telas' ? items : [],
-    nota: state.nota.trim() || null,
-  };
+  // Una fila por tela (mismo catálogo, misma tanda) — nunca un solo registro con varias telas adentro.
+  const rows = m==='telas'
+    ? items.map(i=>({
+        tipo_id: tipo.id,
+        tipo_label: tipo.label,
+        catalogo_id: catalogo.id,
+        catalogo_nombre: catalogo.nombre,
+        tela_id: i.id,
+        tela_nombre: i.nombre,
+        cantidad: i.cantidad,
+        nota: notaVal,
+      }))
+    : [{
+        tipo_id: tipo.id,
+        tipo_label: tipo.label,
+        catalogo_id: catalogo.id,
+        catalogo_nombre: catalogo.nombre,
+        tela_id: null,
+        tela_nombre: null,
+        cantidad: Number(state.cantidad),
+        nota: notaVal,
+      }];
 
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
   btn.textContent = 'Guardando…';
 
-  const ok = await insertRegistro(registro);
+  const ok = await insertRegistro(rows);
 
   if (!ok){
     btn.disabled = false;
@@ -524,7 +539,7 @@ async function onSave(){
 
   btn.classList.add('saved');
   btn.textContent = 'Guardado ✓';
-  toast('Registro guardado en Supabase');
+  toast(rows.length>1 ? `${rows.length} filas guardadas en Supabase` : 'Registro guardado en Supabase');
 
   setTimeout(()=>{
     state.cantidad=''; state.cantidades={}; state.nota=''; state.telaBusqueda='';
@@ -533,6 +548,7 @@ async function onSave(){
     refreshHistCount();
   }, 650);
 }
+
 
 async function refreshHistCount(){
   const list = await loadHistory();
@@ -557,32 +573,46 @@ async function openHistory(){
     return;
   }
 
-  drawerList.innerHTML = list.map(r=>{
-    const fecha = new Date(r.created_at);
+  // Cada tela es su propia fila en Supabase; aquí solo las agrupamos visualmente
+  // cuando vienen de la misma tanda (mismo catálogo + mismo instante de guardado).
+  const groups = [];
+  list.forEach(r=>{
+    const key = `${r.created_at}|${r.catalogo_id}|${r.tipo_id}`;
+    const last = groups[groups.length-1];
+    if (last && last.key===key){ last.rows.push(r); }
+    else { groups.push({ key, rows: [r] }); }
+  });
+
+  drawerList.innerHTML = groups.map(g=>{
+    const r0 = g.rows[0];
+    const ids = g.rows.map(r=>r.id);
+    const fecha = new Date(r0.created_at);
     const fechaStr = fecha.toLocaleDateString('es-CO',{day:'2-digit',month:'short'}) + ' · ' +
       fecha.toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'});
-    const items = r.items || [];
-    const resumen = r.cantidad!=null
-      ? `Cantidad: ${fmtNum(r.cantidad)}`
-      : `${items.length} tela(s) · total ${fmtNum(items.reduce((a,i)=>a+i.cantidad,0))}`;
-    return `<div class="hist-item" data-id="${r.id}">
+
+    const resumen = g.rows.length===1 && r0.tela_nombre==null
+      ? `Cantidad: ${fmtNum(r0.cantidad)}`
+      : g.rows.map(r=>`${r.tela_nombre}: ${fmtNum(r.cantidad)}`).join(' · ');
+
+    return `<div class="hist-item" data-ids="${ids.join(',')}">
       <div class="top">
         <div>
-          <div class="tipo">${r.tipo_label}</div>
-          <div class="cat">${r.catalogo_nombre}</div>
+          <div class="tipo">${r0.tipo_label}</div>
+          <div class="cat">${r0.catalogo_nombre}${g.rows.length>1 ? ` · ${g.rows.length} filas` : ''}</div>
         </div>
         <div class="fecha">${fechaStr}</div>
       </div>
       <div class="resumen">${resumen}</div>
-      ${r.nota ? `<div class="resumen" style="margin-top:3px;">"${escapeHtml(r.nota)}"</div>` : ''}
-      <button class="del" data-del="${r.id}">Eliminar</button>
+      ${r0.nota ? `<div class="resumen" style="margin-top:3px;">"${escapeHtml(r0.nota)}"</div>` : ''}
+      <button class="del" data-del="${ids.join(',')}">Eliminar</button>
     </div>`;
   }).join('');
 
   drawerList.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async ()=>{
     b.textContent = 'Eliminando…';
     b.disabled = true;
-    const ok = await deleteRegistro(b.dataset.del);
+    const ids = b.dataset.del.split(',');
+    const ok = await deleteRegistro(ids);
     if (!ok){ toast('No se pudo eliminar. Intenta de nuevo.'); b.textContent='Eliminar'; b.disabled=false; return; }
     openHistory();
     refreshHistCount();
@@ -601,11 +631,7 @@ function escapeHtml(s){
 function toCSV(list){
   const rows = [['fecha','tipo','catalogo','tela','cantidad','nota']];
   list.forEach(r=>{
-    if (r.cantidad!=null){
-      rows.push([r.created_at, r.tipo_label, r.catalogo_nombre, '', r.cantidad, r.nota||'']);
-    } else {
-      (r.items||[]).forEach(i=>rows.push([r.created_at, r.tipo_label, r.catalogo_nombre, i.nombre, i.cantidad, r.nota||'']));
-    }
+    rows.push([r.created_at, r.tipo_label, r.catalogo_nombre, r.tela_nombre||'', r.cantidad, r.nota||'']);
   });
   return rows.map(row=>row.map(v=>{
     const s = String(v ?? '');
