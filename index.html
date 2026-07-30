@@ -215,11 +215,13 @@ const DATA = {"catalogos": [{"id": "screen", "nombre": "SCREEN"}, {"id": "blacko
 
 const state = {
   tipoId: null,
-  catalogoId: null,
+  catalogoId: null,          // usado en modo 'telas' (un solo catálogo)
+  catalogosSel: {},          // usado en modo 'cantidad' (varios catálogos): { catalogoId: true }
   catBusqueda: '',
   telaBusqueda: '',
-  cantidad: '',
-  cantidades: {},
+  cantidad: '',               // legado, ya no se usa para guardar pero se deja por compatibilidad
+  cantidades: {},              // cantidades por tela (modo 'telas')
+  cantidadesCatalogo: {},      // cantidades por catálogo (modo 'cantidad')
   nota: '',
   saving: false,
 };
@@ -318,19 +320,35 @@ function render(){
   const catList = DATA.catalogos.filter(c=>!catQ || c.nombre.toLowerCase().includes(catQ));
   const catChips = catList.map(c=>{
     const hue = hueFor(c.nombre);
-    return `<button type="button" class="cat-chip ${state.catalogoId===c.id?'active':''}" data-cat="${c.id}">
-      <span class="dot" style="background:hsl(${hue} 55% 45%)"></span>${c.nombre}
+    const active = m==='cantidad' ? !!state.catalogosSel[c.id] : state.catalogoId===c.id;
+    return `<button type="button" class="cat-chip ${active?'active':''}" data-cat="${c.id}">
+      <span class="dot" style="background:hsl(${hue} 55% 45%)"></span>${c.nombre}${m==='cantidad' && active ? ' ✓' : ''}
     </button>`;
   }).join('') || `<div class="empty-note">Sin resultados</div>`;
 
   let step3 = '';
   if (m === 'cantidad'){
-    step3 = `
-      <div class="cantidad-box">
-        <label for="cantidadInput">Cantidad a producir</label>
-        <input id="cantidadInput" type="number" inputmode="decimal" min="0" step="any"
-          placeholder="0" value="${state.cantidad}">
-      </div>`;
+    const seleccionados = DATA.catalogos
+      .filter(c=>state.catalogosSel[c.id])
+      .sort((a,b)=>a.nombre.localeCompare(b.nombre));
+    if (seleccionados.length===0){
+      step3 = `<div class="select-catalogo-msg">Selecciona uno o varios catálogos arriba para ingresar sus cantidades.</div>`;
+    } else {
+      const rows = seleccionados.map(c=>{
+        const val = state.cantidadesCatalogo[c.id] ?? '';
+        return `<div class="tela-row ${val?'filled':''}">
+          <span class="name">${c.nombre}</span>
+          <input type="number" inputmode="decimal" min="0" step="any" placeholder="0"
+            data-catcant="${c.id}" value="${val}">
+        </div>`;
+      }).join('');
+      step3 = `
+        <div class="telas-toolbar">
+          <div class="empty-note" style="padding:0;flex:1;">${seleccionados.length} catálogo(s) seleccionado(s)</div>
+          <button type="button" class="clear-btn" id="clearCantidadesCatalogo">Limpiar cantidades</button>
+        </div>
+        <div class="telas-list" id="catCantList">${rows}</div>`;
+    }
   } else if (m === 'telas'){
     if (!state.catalogoId){
       step3 = `<div class="select-catalogo-msg">Selecciona un catálogo para ver sus telas.</div>`;
@@ -363,9 +381,8 @@ function render(){
 
   const nItems = Object.values(state.cantidades).filter(v=>Number(v)>0).length;
   const totalItems = Object.values(state.cantidades).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
-  const summary = m==='cantidad'
-    ? `Cantidad: <b>${fmtNum(Number(state.cantidad)||0)}</b>`
-    : `<b>${nItems}</b> tela(s) · total <b>${fmtNum(totalItems)}</b>`;
+  const nCat = Object.values(state.cantidadesCatalogo).filter(v=>Number(v)>0).length;
+  const totalCat = Object.values(state.cantidadesCatalogo).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
 
   app.innerHTML = `
     <div class="header">
@@ -391,7 +408,7 @@ function render(){
     </section>
 
     <section class="step">
-      <div class="step-label"><span class="n">3</span>${m==='cantidad' ? 'Cantidad' : 'Telas y cantidades'}</div>
+      <div class="step-label"><span class="n">3</span>${m==='cantidad' ? 'Cantidades por catálogo' : 'Telas y cantidades'}</div>
       ${step3}
     </section>
 
@@ -404,6 +421,7 @@ function render(){
   document.querySelectorAll('[data-tipo]').forEach(b=>b.addEventListener('click', ()=>{
     state.tipoId = b.dataset.tipo;
     state.cantidad=''; state.cantidades={}; state.telaBusqueda='';
+    state.catalogosSel={}; state.cantidadesCatalogo={};
     render();
   }));
 
@@ -411,13 +429,36 @@ function render(){
     state.catBusqueda = e.target.value; render(); focusEl('catSearch');
   });
   document.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click', ()=>{
-    state.catalogoId = b.dataset.cat; state.cantidades={}; state.telaBusqueda='';
+    if (m==='cantidad'){
+      const id = b.dataset.cat;
+      if (state.catalogosSel[id]) delete state.catalogosSel[id];
+      else state.catalogosSel[id] = true;
+    } else {
+      state.catalogoId = b.dataset.cat; state.cantidades={}; state.telaBusqueda='';
+    }
     render();
   }));
 
   if (m==='cantidad'){
-    const input = document.getElementById('cantidadInput');
-    input.addEventListener('input', e=>{ state.cantidad = e.target.value; updateBar(); });
+    document.getElementById('clearCantidadesCatalogo')?.addEventListener('click', ()=>{
+      state.cantidadesCatalogo = {}; render();
+    });
+    document.querySelectorAll('[data-catcant]').forEach(inp=>{
+      inp.addEventListener('input', e=>{
+        const id = e.target.dataset.catcant;
+        state.cantidadesCatalogo[id] = e.target.value;
+        e.target.closest('.tela-row').classList.toggle('filled', !!e.target.value && Number(e.target.value)>0);
+        updateBar();
+      });
+      inp.addEventListener('keydown', e=>{
+        if (e.key==='Enter'){
+          e.preventDefault();
+          const rows = Array.from(document.querySelectorAll('#catCantList input'));
+          const idx = rows.indexOf(e.target);
+          if (idx>-1 && idx<rows.length-1) rows[idx+1].focus(); else e.target.blur();
+        }
+      });
+    });
   }
 
   if (m==='telas' && state.catalogoId){
@@ -473,8 +514,10 @@ function updateBar(){
   const m = mode();
   const nItems = Object.values(state.cantidades).filter(v=>Number(v)>0).length;
   const totalItems = Object.values(state.cantidades).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
+  const nCat = Object.values(state.cantidadesCatalogo).filter(v=>Number(v)>0).length;
+  const totalCat = Object.values(state.cantidadesCatalogo).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
   const summary = m==='cantidad'
-    ? `Cantidad: <b>${fmtNum(Number(state.cantidad)||0)}</b>`
+    ? `<b>${nCat}</b> catálogo(s) · total <b>${fmtNum(totalCat)}</b>`
     : m==='telas'
       ? `<b>${nItems}</b> tela(s) seleccionada(s) · total <b>${fmtNum(totalItems)}</b>`
       : 'Elige el tipo de registro para empezar';
@@ -484,45 +527,49 @@ function updateBar(){
 async function onSave(){
   const m = mode();
   if (!state.tipoId) return toast('Elige qué se va a registrar');
-  if (!state.catalogoId) return toast('Selecciona un catálogo');
-  if (m==='cantidad' && !(Number(state.cantidad)>0)) return toast('Ingresa una cantidad válida');
 
-  let items = [];
-  if (m==='telas'){
+  const tipo = TIPOS.find(t=>t.id===state.tipoId);
+  const notaVal = state.nota.trim() || null;
+  let rows = [];
+
+  if (m === 'cantidad'){
+    const seleccionados = DATA.catalogos.filter(c=>state.catalogosSel[c.id]);
+    if (seleccionados.length===0) return toast('Selecciona al menos un catálogo');
+    rows = seleccionados
+      .map(c=>({ catalogo: c, cantidad: Number(state.cantidadesCatalogo[c.id]) }))
+      .filter(r=>Number.isFinite(r.cantidad) && r.cantidad>0)
+      .map(r=>({
+        tipo_id: tipo.id,
+        tipo_label: tipo.label,
+        catalogo_id: r.catalogo.id,
+        catalogo_nombre: r.catalogo.nombre,
+        tela_id: null,
+        tela_nombre: null,
+        cantidad: r.cantidad,
+        nota: notaVal,
+      }));
+    if (rows.length===0) return toast('Ingresa la cantidad de al menos un catálogo');
+  } else if (m === 'telas'){
+    if (!state.catalogoId) return toast('Selecciona un catálogo');
+    const catalogo = DATA.catalogos.find(c=>c.id===state.catalogoId);
     const telas = DATA.telas[state.catalogoId] || [];
-    items = Object.entries(state.cantidades)
+    const items = Object.entries(state.cantidades)
       .map(([id,v])=>({ id, cantidad: Number(v) }))
       .filter(i=>Number.isFinite(i.cantidad) && i.cantidad>0)
       .map(i=>({...i, nombre: (telas.find(t=>t.id===i.id)||{}).nombre || i.id }));
     if (items.length===0) return toast('Ingresa la cantidad de al menos una tela');
+    // Una fila por tela (mismo catálogo, misma tanda) — nunca un solo registro con varias telas adentro.
+    rows = items.map(i=>({
+      tipo_id: tipo.id,
+      tipo_label: tipo.label,
+      catalogo_id: catalogo.id,
+      catalogo_nombre: catalogo.nombre,
+      tela_id: i.id,
+      tela_nombre: i.nombre,
+      cantidad: i.cantidad,
+      nota: notaVal,
+    }));
   }
-
-  const tipo = TIPOS.find(t=>t.id===state.tipoId);
-  const catalogo = DATA.catalogos.find(c=>c.id===state.catalogoId);
-  const notaVal = state.nota.trim() || null;
-
-  // Una fila por tela (mismo catálogo, misma tanda) — nunca un solo registro con varias telas adentro.
-  const rows = m==='telas'
-    ? items.map(i=>({
-        tipo_id: tipo.id,
-        tipo_label: tipo.label,
-        catalogo_id: catalogo.id,
-        catalogo_nombre: catalogo.nombre,
-        tela_id: i.id,
-        tela_nombre: i.nombre,
-        cantidad: i.cantidad,
-        nota: notaVal,
-      }))
-    : [{
-        tipo_id: tipo.id,
-        tipo_label: tipo.label,
-        catalogo_id: catalogo.id,
-        catalogo_nombre: catalogo.nombre,
-        tela_id: null,
-        tela_nombre: null,
-        cantidad: Number(state.cantidad),
-        nota: notaVal,
-      }];
 
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
@@ -542,7 +589,8 @@ async function onSave(){
   toast(rows.length>1 ? `${rows.length} filas guardadas en Supabase` : 'Registro guardado en Supabase');
 
   setTimeout(()=>{
-    state.cantidad=''; state.cantidades={}; state.nota=''; state.telaBusqueda='';
+    state.cantidad=''; state.cantidades={}; state.telaBusqueda='';
+    state.catalogosSel={}; state.cantidadesCatalogo={}; state.nota='';
     btn.disabled = false; btn.classList.remove('saved'); btn.textContent = 'Guardar registro';
     render();
     refreshHistCount();
