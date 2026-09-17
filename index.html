@@ -340,7 +340,7 @@ function render(){
         const val = state.cantidadesCatalogo[c.id] ?? '';
         return `<div class="tela-row ${val?'filled':''}">
           <span class="name">${c.nombre}</span>
-          <input type="number" inputmode="decimal" min="0" step="any" placeholder="0"
+          <input type="number" inputmode="decimal" step="any" placeholder="0"
             data-catcant="${c.id}" value="${val}">
         </div>`;
       }).join('');
@@ -362,7 +362,7 @@ function render(){
         const val = state.cantidades[t.id] ?? '';
         return `<div class="tela-row ${val?'filled':''}">
           <span class="name">${t.nombre}</span>
-          <input type="number" inputmode="decimal" min="0" step="any" placeholder="0"
+          <input type="number" inputmode="decimal" step="any" placeholder="0"
             data-tela="${t.id}" value="${val}">
         </div>`;
       }).join('') || `<div class="no-results">Ninguna tela coincide con “${state.telaBusqueda}”.</div>`;
@@ -381,10 +381,10 @@ function render(){
     step3 = `<div class="select-catalogo-msg">Elige primero qué se va a registrar.</div>`;
   }
 
-  const nItems = Object.values(state.cantidades).filter(v=>Number(v)>0).length;
-  const totalItems = Object.values(state.cantidades).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
-  const nCat = Object.values(state.cantidadesCatalogo).filter(v=>Number(v)>0).length;
-  const totalCat = Object.values(state.cantidadesCatalogo).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
+  const nItems = Object.values(state.cantidades).filter(v=>Number(v)!==0 && v!=='').length;
+  const totalItems = Object.values(state.cantidades).reduce((a,v)=>a+(Number.isFinite(Number(v))?Number(v):0),0);
+  const nCat = Object.values(state.cantidadesCatalogo).filter(v=>Number(v)!==0 && v!=='').length;
+  const totalCat = Object.values(state.cantidadesCatalogo).reduce((a,v)=>a+(Number.isFinite(Number(v))?Number(v):0),0);
 
   app.innerHTML = `
     <div class="header">
@@ -449,7 +449,7 @@ function render(){
       inp.addEventListener('input', e=>{
         const id = e.target.dataset.catcant;
         state.cantidadesCatalogo[id] = e.target.value;
-        e.target.closest('.tela-row').classList.toggle('filled', !!e.target.value && Number(e.target.value)>0);
+        e.target.closest('.tela-row').classList.toggle('filled', e.target.value!=='' && Number(e.target.value)!==0);
         updateBar();
       });
       inp.addEventListener('keydown', e=>{
@@ -473,7 +473,7 @@ function render(){
       inp.addEventListener('input', e=>{
         const id = e.target.dataset.tela;
         state.cantidades[id] = e.target.value;
-        e.target.closest('.tela-row').classList.toggle('filled', !!e.target.value && Number(e.target.value)>0);
+        e.target.closest('.tela-row').classList.toggle('filled', e.target.value!=='' && Number(e.target.value)!==0);
         updateBar();
       });
       inp.addEventListener('keydown', e=>{
@@ -514,10 +514,10 @@ function renderBar(){
 
 function updateBar(){
   const m = mode();
-  const nItems = Object.values(state.cantidades).filter(v=>Number(v)>0).length;
-  const totalItems = Object.values(state.cantidades).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
-  const nCat = Object.values(state.cantidadesCatalogo).filter(v=>Number(v)>0).length;
-  const totalCat = Object.values(state.cantidadesCatalogo).reduce((a,v)=>a+(Number(v)>0?Number(v):0),0);
+  const nItems = Object.values(state.cantidades).filter(v=>Number(v)!==0 && v!=='').length;
+  const totalItems = Object.values(state.cantidades).reduce((a,v)=>a+(Number.isFinite(Number(v))?Number(v):0),0);
+  const nCat = Object.values(state.cantidadesCatalogo).filter(v=>Number(v)!==0 && v!=='').length;
+  const totalCat = Object.values(state.cantidadesCatalogo).reduce((a,v)=>a+(Number.isFinite(Number(v))?Number(v):0),0);
   const summary = m==='cantidad'
     ? `<b>${nCat}</b> catálogo(s) · total <b>${fmtNum(totalCat)}</b>`
     : m==='telas'
@@ -539,7 +539,7 @@ async function onSave(){
     if (seleccionados.length===0) return toast('Selecciona al menos un catálogo');
     rows = seleccionados
       .map(c=>({ catalogo: c, cantidad: Number(state.cantidadesCatalogo[c.id]) }))
-      .filter(r=>Number.isFinite(r.cantidad) && r.cantidad>0)
+      .filter(r=>Number.isFinite(r.cantidad) && r.cantidad!==0)
       .map(r=>({
         tipo_id: tipo.id,
         tipo_label: tipo.label,
@@ -557,7 +557,7 @@ async function onSave(){
     const telas = DATA.telas[state.catalogoId] || [];
     const items = Object.entries(state.cantidades)
       .map(([id,v])=>({ id, cantidad: Number(v) }))
-      .filter(i=>Number.isFinite(i.cantidad) && i.cantidad>0)
+      .filter(i=>Number.isFinite(i.cantidad) && i.cantidad!==0)
       .map(i=>({...i, nombre: (telas.find(t=>t.id===i.id)||{}).nombre || i.id }));
     if (items.length===0) return toast('Ingresa la cantidad de al menos una tela');
     // Una fila por tela (mismo catálogo, misma tanda) — nunca un solo registro con varias telas adentro.
